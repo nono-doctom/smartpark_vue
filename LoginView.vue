@@ -5,14 +5,29 @@
 
       <h2>Connexion</h2>
 
-      <input v-model="email" placeholder="Email" />
-      <input v-model="password" type="password" placeholder="Mot de passe" />
+      <form @submit.prevent="login">
 
-      <button @click="login" :disabled="loading">
-        {{ loading ? "Connexion..." : "Se connecter" }}
-      </button>
+        <input
+          v-model="email"
+          type="email"
+          placeholder="Email"
+        >
 
-      <p v-if="error" class="error">{{ error }}</p>
+        <input
+          v-model="password"
+          type="password"
+          placeholder="Mot de passe"
+        >
+
+        <button type="submit" :disabled="loading">
+          {{ loading ? "Connexion..." : "Se connecter" }}
+        </button>
+
+      </form>
+
+      <p v-if="error" class="error">
+        {{ error }}
+      </p>
 
     </div>
 
@@ -35,7 +50,15 @@ export default {
   methods: {
 
     async login() {
+
       this.error = "";
+
+      // ❌ validation simple
+      if (!this.email || !this.password) {
+        this.error = "Remplis tous les champs";
+        return;
+      }
+
       this.loading = true;
 
       try {
@@ -58,11 +81,10 @@ export default {
           return;
         }
 
-        // 🔐 STOCKAGE TOKEN + USER
-        localStorage.setItem("token", data.token);
+        // 🔐 sauvegarde user
         localStorage.setItem("user", JSON.stringify(data.user));
 
-        // 🚀 redirection
+        // 🚀 redirection profil
         this.$router.push("/profil");
 
       } catch (err) {
@@ -84,7 +106,7 @@ export default {
   justify-content: center;
   align-items: center;
   background: linear-gradient(135deg,#74b0bf, #0b6380);
-  color: white;
+  color: black;
 }
 
 .card {
@@ -111,14 +133,9 @@ input {
 
 button {
   background: #74b0bf;
-  color: white;
+  color: black;
   font-weight: bold;
   cursor: pointer;
-  transition: 0.2s;
-}
-
-button:hover {
-  background: #5b9bab;
 }
 
 button:disabled {
@@ -128,7 +145,6 @@ button:disabled {
 
 .error {
   color: #ffb3c1;
-  font-size: 13px;
   text-align: center;
   margin-top: 10px;
 }
