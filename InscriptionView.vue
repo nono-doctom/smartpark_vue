@@ -3,22 +3,56 @@
 
     <div class="card">
 
-      <h2>Inscription</h2>
+      <h2>Créer un compte</h2>
 
-      <input v-model="nom" placeholder="Nom" />
-      <input v-model="prenom" placeholder="Prénom" />
-      <input v-model="email" placeholder="Email" />
-      <input v-model="password" type="password" placeholder="Mot de passe" />
+      <!-- Formulaire -->
+      <form @submit.prevent="register">
 
-      <button @click="register" :disabled="loading">
-        {{ loading ? "Création..." : "Créer un compte" }}
-      </button>
+        <input
+          v-model="nom"
+          type="text"
+          placeholder="Nom"
+        >
 
-      <p v-if="success" class="success">{{ success }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
+        <input
+          v-model="prenom"
+          type="text"
+          placeholder="Prénom"
+        >
 
-      <p class="link" @click="goLogin">
-        Déjà un compte ? Connexion
+        <input
+          v-model="email"
+          type="email"
+          placeholder="Email"
+        >
+
+        <input
+          v-model="password"
+          type="password"
+          placeholder="Mot de passe"
+        >
+
+        <button type="submit" :disabled="loading">
+          {{ loading ? "Création..." : "S'inscrire" }}
+        </button>
+
+      </form>
+
+      <!-- Messages -->
+      <p v-if="error" class="error">
+        {{ error }}
+      </p>
+
+      <p v-if="success" class="success">
+        {{ success }}
+      </p>
+
+      <!-- Lien vers login -->
+      <p class="link">
+        Déjà inscrit ?
+        <span @click="goLogin">
+          Connexion
+        </span>
       </p>
 
     </div>
@@ -46,15 +80,22 @@ export default {
 
     async register() {
 
-      if (this.loading) return;
-
+      // reset messages
       this.error = "";
       this.success = "";
+
+      // vérifie champs vides
+      if (!this.nom || !this.prenom || !this.email || !this.password) {
+        this.error = "Tous les champs sont obligatoires";
+        return;
+      }
+
       this.loading = true;
 
       try {
 
-        const res = await fetch("http://localhost:3000/api/inscrire", {
+        // appel API backend
+        const response = await fetch("http://localhost:3000/api/inscrire", {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
@@ -67,29 +108,27 @@ export default {
           })
         });
 
-        const data = await res.json();
+        const data = await response.json();
 
-        if (!res.ok) {
+        // si erreur backend
+        if (!response.ok) {
           this.error = data.error || "Erreur inscription";
           return;
         }
 
-        this.success = "Compte créé ✔";
+        // succès
+        this.success = "Compte créé";
 
+        // redirection vers login
         setTimeout(() => {
           this.$router.push("/login");
         }, 1000);
 
       } catch (err) {
-
-        console.error(err);
         this.error = "Erreur serveur";
-
-      } finally {
-
-        this.loading = false;
-
       }
+
+      this.loading = false;
     },
 
     goLogin() {
@@ -107,7 +146,7 @@ export default {
   justify-content: center;
   align-items: center;
   background: linear-gradient(135deg, #74b0bf, #0b6380);
-  color: white;
+  color: black;
 }
 
 .card {
@@ -135,14 +174,9 @@ input {
 
 button {
   background: #74b0bf;
-  color: white;
+  color: black;
   font-weight: bold;
   cursor: pointer;
-  transition: 0.2s;
-}
-
-button:hover {
-  background: #5b9bab;
 }
 
 button:disabled {
@@ -152,22 +186,24 @@ button:disabled {
 
 .success {
   color: #b7ffbf;
-  font-size: 13px;
   text-align: center;
   margin-top: 10px;
 }
 
 .error {
   color: #ffb3c1;
-  font-size: 13px;
   text-align: center;
   margin-top: 10px;
 }
 
 .link {
   text-align: center;
-  margin-top: 14px;
-  font-size: 12px;
+  margin-top: 15px;
+  font-weight: bold;
+
+}
+
+.link span {
   cursor: pointer;
   text-decoration: underline;
 }
