@@ -17,8 +17,7 @@
           Sauvegarder
         </button>
 
-        <p class="success" v-if="success">{{ success }}</p>
-        <p class="error" v-if="error">{{ error }}</p>
+        <p v-if="success" class="success">{{ success }}</p>
       </div>
 
       <!-- 🚗 VEHICULES -->
@@ -29,21 +28,37 @@
 
         <input v-model="newPlaque" placeholder="AB-123-CD">
 
+        <select v-model="newType">
+          <option disabled value="">Type de véhicule</option>
+          <option value="voiture">🚗 Voiture</option>
+          <option value="moto">🏍 Moto</option>
+          <option value="handicap">♿ Handicapé</option>
+        </select>
+
         <button class="primary" @click="addVehicule">
           Ajouter
         </button>
 
-        <!-- 🔥 MESSAGES BACKEND -->
         <p v-if="vehiculeSuccess" class="success">{{ vehiculeSuccess }}</p>
         <p v-if="vehiculeError" class="error">{{ vehiculeError }}</p>
 
+        <!-- LISTE -->
         <div v-for="v in vehicules" :key="v.id_vehicule" class="plate">
-          {{ v.plaque_immatriculation }}
+
+          <div class="plaque">
+            {{ v.plaque_immatriculation }}
+          </div>
+
+          <div class="type">
+            {{ formatType(v.type_vehicule) }}
+          </div>
 
           <button class="danger" @click="deleteVehicule(v.id_vehicule)">
             Supprimer
           </button>
+
         </div>
+
       </div>
 
       <!-- 🗺️ NAVIGATION -->
@@ -75,10 +90,10 @@ export default {
       user: JSON.parse(localStorage.getItem("user")) || {},
       vehicules: [],
       newPlaque: "",
+      newType: "",
       success: "",
-      error: "",
-      vehiculeSuccess: "",
-      vehiculeError: ""
+      vehiculeError: "",
+      vehiculeSuccess: ""
     };
   },
 
@@ -95,21 +110,18 @@ export default {
   methods: {
 
     getHeaders() {
+      const token = localStorage.getItem("token");
+
       return {
-        Authorization: "Bearer " + localStorage.getItem("token"),
+        Authorization: "Bearer " + token,
         "Content-Type": "application/json"
       };
     },
 
     goHome() {
-      if (!this.isProfileComplete) {
-        this.error = "Complète ton profil avant d’aller sur la carte";
-        return;
-      }
       this.$router.push("/map");
     },
 
-    // 🚗 LOAD
     async loadVehicules() {
       try {
         const res = await fetch("http://localhost:3000/api/vehicules", {
@@ -119,49 +131,46 @@ export default {
         const data = await res.json();
 
         if (!res.ok) {
-          this.vehiculeError = data.error;
+          this.vehiculeError = data.error || "Erreur API";
           return;
         }
 
         this.vehicules = data;
 
-      } catch (e) {
+      } catch (err) {
         this.vehiculeError = "Erreur chargement véhicules";
       }
     },
 
-    // ➕ ADD
     async addVehicule() {
-      this.vehiculeError = "";
-      this.vehiculeSuccess = "";
-
       try {
         const res = await fetch("http://localhost:3000/api/vehicules", {
           method: "POST",
           headers: this.getHeaders(),
           body: JSON.stringify({
-            plaque: this.newPlaque
+            plaque: this.newPlaque,
+            type: this.newType
           })
         });
 
         const data = await res.json();
 
         if (!res.ok) {
-          this.vehiculeError = data.error;
+          this.vehiculeError = data.error || "Erreur ajout";
           return;
         }
 
-        this.vehiculeSuccess = data.message;
+        this.vehiculeSuccess = "Véhicule ajouté ✔";
         this.newPlaque = "";
+        this.newType = "";
 
         this.loadVehicules();
 
-      } catch (e) {
+      } catch (err) {
         this.vehiculeError = "Erreur serveur";
       }
     },
 
-    // ❌ DELETE
     async deleteVehicule(id) {
       try {
         const res = await fetch(
@@ -175,13 +184,13 @@ export default {
         const data = await res.json();
 
         if (!res.ok) {
-          this.vehiculeError = data.error;
+          this.vehiculeError = data.error || "Erreur suppression";
           return;
         }
 
         this.loadVehicules();
 
-      } catch (e) {
+      } catch (err) {
         this.vehiculeError = "Erreur suppression";
       }
     },
@@ -189,6 +198,16 @@ export default {
     saveUser() {
       localStorage.setItem("user", JSON.stringify(this.user));
       this.success = "Profil sauvegardé ✔";
+    },
+
+    formatType(type) {
+      if (!type) return "🚗 Voiture";
+
+      const t = type.toLowerCase();
+
+      if (t.includes("moto")) return "🏍 Moto";
+      if (t.includes("handicap")) return "♿ Handicapé";
+      return "🚗 Voiture";
     }
   }
 };
@@ -200,7 +219,7 @@ export default {
 .page {
   min-height: 100vh;
   font-family: "Segoe UI", sans-serif;
-  background: linear-gradient(135deg,#74b0bf, #0b6380);
+  background: linear-gradient(135deg,#74b0bf,#0b6380);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -228,17 +247,15 @@ header {
   background: rgba(255,255,255,0.08);
   padding: 16px;
   border-radius: 20px;
-  margin-top: 20px;
   color: white;
 }
 
-input {
+input, select {
   width: 100%;
   padding: 12px;
   margin-top: 10px;
   border-radius: 12px;
   border: none;
-  outline: none;
 }
 
 button {
@@ -268,10 +285,9 @@ button {
   border-radius: 12px;
   text-align: center;
   margin-top: 12px;
-  font-weight: bold;
-  letter-spacing: 2px;
 }
 
 .success { color: #22c55e; }
 .error { color: #f87171; }
+.type { font-size: 12px; color: gray; margin-top: 4px; }
 </style>
