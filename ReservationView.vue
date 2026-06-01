@@ -3,106 +3,83 @@
 
     <header>SmartPark - Réservation</header>
 
-    <div class="container">
+    <div class="layout">
 
-      <!-- INFOS -->
-      <div class="card">
-        <p><b>Parking :</b> {{ idParking }}</p>
-        <p><b>Place choisie :</b> {{ selectedPlace || "Aucune" }}</p>
-        <p><b>Véhicule :</b> {{ idVehicule || "Chargement..." }}</p>
+      <div class="panel">
 
-        <p v-if="remainingTime > 0">
-          <b>Temps restant :</b> {{ formattedTime }}
-        </p>
+        <div class="title">Détails</div>
+
+        <div class="info">
+          <div><span>Parking</span> {{ idParking }}</div>
+          <div><span>Place</span> {{ selectedPlace || "—" }}</div>
+          <div><span>Réservée</span> {{ myReservedPlace || "—" }}</div>
+          <div><span>Véhicule</span> {{ idVehicule || "—" }}</div>
+
+          <div v-if="remainingTime > 0">
+            <span>Temps</span> {{ formattedTime }}
+          </div>
+        </div>
+
       </div>
 
-      <!-- NOTIFICATION -->
-      <div v-if="notification" class="notif">
-        🔔 {{ notification }}
-      </div>
-
-      <!-- PLACES -->
       <div class="grid">
+
         <div
           v-for="p in places"
           :key="p.num_place"
-          class="place"
-          :class="{
-            free: !occupiedPlaces.includes(p.num_place),
-            busy: occupiedPlaces.includes(p.num_place),
-            selected: selectedPlace === p.num_place
-          }"
+          class="spot"
+          :class="spotClass(p)"
           @click="selectPlace(p)"
         >
-          {{ p.num_place }}
+          <div>{{ p.num_place }}</div>
 
-          <span class="badge">
-            {{ occupiedPlaces.includes(p.num_place) ? "Occupée" : "Libre" }}
-          </span>
+          <div class="type">
+            {{ typeLabel(p) }}
+          </div>
+
         </div>
-      </div>
 
-      <!-- ACTIONS -->
-      <button
-        class="primary"
-        :disabled="!canReserve"
-        @click="reserve"
-      >
-        Réserver 30 min
-      </button>
-
-      <button class="danger" @click="cancelReservation">
-        Annuler réservation
-      </button>
-
-      <!-- ACTIVITÉ -->
-      <div class="card">
-        <h3>Activité du parking</h3>
-
-        <div
-          v-for="r in allReservations"
-          :key="r.id"
-          class="res"
-        >
-          🚗 Place {{ r.num_place }} - {{ r.parking }}
-          <small>• {{ r.source }}</small>
-        </div>
-      </div>
-
-      <!-- MESSAGE -->
-      <div
-        v-if="message"
-        class="message"
-        :class="messageType"
-      >
-        {{ message }}
       </div>
 
     </div>
+
+    <div class="actions">
+
+      <button class="btn primary"
+        :disabled="!selectedPlace || !idVehicule"
+        @click="reserve">
+        Réserver
+      </button>
+
+      <button class="btn danger"
+        :disabled="!lastReservationId"
+        @click="cancelReservation">
+        Annuler
+      </button>
+
+    </div>
+
+    <div class="message">{{ message }}</div>
+
   </div>
 </template>
 
 <script>
-export default {
-  name: "ReservationView",
+import { io } from "socket.io-client";
+const socket = io("http://localhost:3000");
 
+export default {
   data() {
     return {
       idParking: null,
       places: [],
       selectedPlace: null,
+      myReservedPlace: null,
       idVehicule: null,
-
-      loading: false,
+      lastReservationId: null,
       message: "",
-      messageType: "success",
-
       remainingTime: 0,
-      timer: null,
-
-      realReservations: [],
-      fakeReservations: [],
-      notification: ""
+      timer: null
     };
   },
 
@@ -111,18 +88,6 @@ export default {
       const m = Math.floor(this.remainingTime / 60);
       const s = this.remainingTime % 60;
       return `${m}m ${s < 10 ? "0" : ""}${s}s`;
-    },
-
-    allReservations() {
-      return [...this.realReservations, ...this.fakeReservations];
-    },
-
-    occupiedPlaces() {
-      return this.allReservations.map(r => r.num_place);
-    },
-
-    canReserve() {
-      return this.selectedPlace && this.idVehicule;
     }
   },
 
@@ -131,18 +96,9 @@ export default {
 
     this.loadPlaces();
     this.loadVehicule();
-    this.loadRealReservations();
 
-    this.generateFakeReservations();
-
-    setInterval(() => {
-      this.generateFakeReservations();
-      this.checkNotification();
-    }, 20000);
-
-    setInterval(() => {
-      this.loadRealReservations();
-    }, 15000);
+    socket.emit("subscribeParking", this.idParking);
+    socket.on("update", () => this.loadPlaces());
   },
 
   methods: {
@@ -155,144 +111,79 @@ export default {
     },
 
     async loadPlaces() {
-      const res = await fetch(
+      const r = await fetch(
         `http://localhost:3000/api/places?id=${this.idParking}`
       );
-
-      this.places = await res.json();
+      this.places = await r.json();
     },
 
     async loadVehicule() {
-      const res = await fetch(
-        "http://localhost:3000/api/vehicules",
-        {
-          headers: this.getHeaders()
-        }
-      );
+      const r = await fetch("http://localhost:3000/api/vehicules", {
+        headers: this.getHeaders()
+      });
 
-      const data = await res.json();
-      this.idVehicule = data?.[0]?.id_vehicule || null;
-    },
-
-    async loadRealReservations() {
-      const res = await fetch(
-        "http://localhost:3000/api/mes-reservations",
-        {
-          headers: this.getHeaders()
-        }
-      );
-
-      const data = await res.json();
-
-      this.realReservations = data.map(r => ({
-        id: r.id_reservation,
-        num_place: r.num_place,
-        parking: r.parking,
-        source: "Vous"
-      }));
-    },
-
-    generateFakeReservations() {
-      const names = [
-        "Léa","Inès","Thomas","Lucas","Emma",
-        "Mohamed","Chloé","Nina","Adam","Alex",
-        "Manon","Hugo","Sofia","Yanis","Noah",
-        "Eva","Paul","Lina","Julie","Enzo",
-        "Sarah","Mehdi"
-      ];
-
-      const fake = [];
-      const used = [];
-
-      const count = 18 + Math.floor(Math.random() * 8);
-
-      for (let i = 0; i < count; i++) {
-        let place;
-
-        do {
-          place = Math.floor(Math.random() * 30) + 1;
-        } while (used.includes(place));
-
-        used.push(place);
-
-        const name =
-          names[Math.floor(Math.random() * names.length)];
-
-        fake.push({
-          id: "fake_" + Math.random(),
-          num_place: place,
-          parking: "Parking Central",
-          source: `${name} a réservé`
-        });
-      }
-
-      this.fakeReservations = fake;
+      const list = await r.json();
+      this.idVehicule = list?.[0]?.id_vehicule;
     },
 
     selectPlace(p) {
-      if (this.occupiedPlaces.includes(p.num_place)) return;
-
+      if (p.etat_place === 1) return;
       this.selectedPlace = p.num_place;
     },
 
     async reserve() {
-      if (!this.idVehicule) {
-        this.message = "❌ Véhicule non trouvé";
-        this.messageType = "error";
+
+      const r = await fetch("http://localhost:3000/api/reservation", {
+        method: "POST",
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          id_parking: this.idParking,
+          num_place: this.selectedPlace,
+          id_vehicule: this.idVehicule
+        })
+      });
+
+      const data = await r.json();
+
+      if (!r.ok) {
+        this.message = data.error;
         return;
       }
 
-      const res = await fetch(
-        "http://localhost:3000/api/reservation",
-        {
-          method: "POST",
-          headers: this.getHeaders(),
-          body: JSON.stringify({
-            id_parking: this.idParking,
-            num_place: this.selectedPlace,
-            id_vehicule: this.idVehicule
-          })
-        }
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        this.message = "❌ " + data.error;
-        this.messageType = "error";
-        return;
-      }
+      this.lastReservationId = data.id_reservation;
+      this.myReservedPlace = this.selectedPlace;
 
       this.message = "✔ Réservation confirmée";
-      this.messageType = "success";
 
-      this.remainingTime = 1800;
-
-      this.startTimer();
-      this.loadRealReservations();
+      this.startTimer(30);
       this.loadPlaces();
     },
 
     async cancelReservation() {
-      await fetch(
-        "http://localhost:3000/api/reservation/annuler",
-        {
-          method: "POST",
-          headers: this.getHeaders(),
-          body: JSON.stringify({
-            id_vehicule: this.idVehicule
-          })
-        }
-      );
+
+      await fetch("http://localhost:3000/api/reservation/annuler", {
+        method: "POST",
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          id_reservation: this.lastReservationId
+        })
+      });
 
       this.message = "✔ Réservation annulée";
 
-      this.loadRealReservations();
+      clearInterval(this.timer);
+
+      this.lastReservationId = null;
+      this.myReservedPlace = null;
+      this.selectedPlace = null;
+
       this.loadPlaces();
     },
 
-    startTimer() {
+    startTimer(min = 30) {
       clearInterval(this.timer);
+
+      this.remainingTime = min * 60;
 
       this.timer = setInterval(() => {
         if (this.remainingTime > 0) {
@@ -301,135 +192,98 @@ export default {
       }, 1000);
     },
 
-    checkNotification() {
-      const free =
-        this.places.length - this.occupiedPlaces.length;
+    typeLabel(p) {
+      const t = (p.type_place || "").toLowerCase();
 
-      if (free > 0 && free < 5) {
-        this.notification =
-          "⚠ Une place vient de se libérer !";
+      if (t === "voiture") return " Voiture";
+      if (t === "moto") return " Moto";
+      if (t === "handicap") return " Handicap";
 
-        setTimeout(() => {
-          this.notification = "";
-        }, 4000);
-      }
+      return "❓ Inconnu";
+    },
+
+    spotClass(p) {
+      const t = (p.type_place || "").toLowerCase();
+
+      return {
+        free: p.etat_place === 0,
+        busy: p.etat_place === 1,
+        selected: this.selectedPlace === p.num_place,
+        mine: this.myReservedPlace === p.num_place,
+        voiture: t === "voiture",
+        moto: t === "moto",
+        handicap: t === "handicap"
+      };
     }
   }
 };
 </script>
 
 <style scoped>
-.page{
-  min-height:100vh;
-  font-family:"Segoe UI",sans-serif;
-  background:linear-gradient(135deg,#74b0bf,#0b6380);
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  padding:30px;
+.page {
+  min-height: 100vh;
+  background: #0f172a;
+  color: white;
+  font-family: system-ui;
 }
 
-.container{
-  width:480px;
-  display:flex;
-  flex-direction:column;
-  gap:15px;
+header {
+  text-align: center;
+  padding: 16px;
+  background: #111827;
+  font-weight: bold;
 }
 
-header{
-  text-align:center;
-  font-size:24px;
-  font-weight:700;
-  padding:18px;
-  border-radius:20px;
-  background:rgba(255,255,255,.15);
-  color:white;
+.layout {
+  display: flex;
+  gap: 20px;
+  padding: 20px;
 }
 
-.card{
-  background:rgba(255,255,255,.92);
-  padding:16px;
-  border-radius:18px;
+.panel {
+  width: 260px;
+  background: #111827;
+  padding: 16px;
+  border-radius: 10px;
 }
 
-.grid{
-  display:grid;
-  grid-template-columns:repeat(4,1fr);
-  gap:10px;
+.grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 10px;
 }
 
-.place{
-  padding:18px;
-  border-radius:14px;
-  text-align:center;
-  font-weight:bold;
-  cursor:pointer;
-  position:relative;
+.spot {
+  background: #1f2937;
+  padding: 12px;
+  border-radius: 10px;
+  text-align: center;
+  cursor: pointer;
 }
 
-.free{
-  background:#22c55e;
-  color:white;
+.free { background: #22c55e; }
+.busy { background: #ef4444; }
+.selected { outline: 2px solid #38bdf8; }
+.mine { border: 2px solid gold; }
+
+.actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  padding: 15px;
 }
 
-.busy{
-  background:#ef4444;
-  color:white;
-  cursor:not-allowed;
-  opacity:.85;
+.btn {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
 }
 
-.selected{
-  outline:3px solid #0b6380;
-}
+.primary { background: #38bdf8; }
+.danger { background: #ef4444; }
 
-.badge{
-  position:absolute;
-  top:4px;
-  right:4px;
-  font-size:9px;
-  padding:3px 6px;
-  border-radius:8px;
-  background:rgba(0,0,0,.35);
-  color:white;
-}
-
-button{
-  padding:14px;
-  border:none;
-  border-radius:14px;
-  width:100%;
-  font-weight:bold;
-}
-
-.primary{
-  background:#22c55e;
-  color:white;
-}
-
-.danger{
-  background:#ef4444;
-  color:white;
-}
-
-.notif{
-  background:#fff3cd;
-  padding:10px;
-  border-radius:10px;
-  text-align:center;
-  font-weight:bold;
-}
-
-.message{
-  text-align:center;
-  padding:10px;
-}
-
-.success{
-  color:#16a34a;
-}
-
-.error{
-  color:#dc2626;
+.message {
+  text-align: center;
 }
 </style>
