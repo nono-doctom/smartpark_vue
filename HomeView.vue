@@ -1,18 +1,20 @@
-const { defineConfig } = require('@vue/cli-service')
-module.exports = defineConfig({
-  transpileDependencies: true
-})
 <template>
   <div id="app">
-    <header>SmartPark - Trouver et réserver votre place</header>
 
-    <div class="message">{{ message }}</div>
+    <header>
+      SmartPark - Trouver et réserver votre place
+    </header>
 
     <div class="container">
+
+      <!-- SIDEBAR -->
       <div class="sidebar">
+
         <div class="card">
           <h3>Recherche itinéraire</h3>
+
           <input v-model="destination" placeholder="Adresse" />
+
           <button @click="searchDestination">
             Afficher itinéraire
           </button>
@@ -22,21 +24,39 @@ module.exports = defineConfig({
 
         <div class="card">
           <h3>Filtres</h3>
+
           <button @click="loadAllParkings">Tous</button>
-          <button @click="loadNearby">Proches</button>
+          <button @click="loadNearby">Parkings proches</button>
           <button @click="findBest">Meilleur</button>
+          <button @click="showSubscribedOnly">Mes abonnements</button>
         </div>
+
       </div>
 
+      <!-- MAP -->
       <div id="map"></div>
+
     </div>
+
+    <!-- NOTIFICATIONS -->
+    <div class="notifications">
+      <div v-for="n in notifications" :key="n.id" class="toast">
+        {{ n.msg }}
+      </div>
+    </div>
+
   </div>
 </template>
 
 <script>
+import { io } from "socket.io-client";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+
 import "leaflet-routing-machine";
+import "leaflet-routing-machine/dist/leaflet-routing-machine.css";
+
+const socket = io("http://localhost:3000");
 
 export default {
   name: "HomeView",
@@ -51,10 +71,17 @@ export default {
       lng: 5.4,
 
       destination: "",
-      parkings: [],
+
       allParkings: [],
+      viewParkings: [],
+
       placesByParking: {},
-      message: "Chargement..."
+
+      notifications: [],
+
+      subscribedParkings: JSON.parse(
+        localStorage.getItem("subscribedParkings") || "[]"
+      )
     };
   },
 
@@ -63,12 +90,36 @@ export default {
     this.getLocation();
     this.loadAllParkings();
 
-    setInterval(() => {
+    socket.on("update", () => {
       this.loadAllParkings();
-    }, 10000);
+    });
+
+    socket.on("placeFree", data => {
+      const id = Number(data?.parkingId || data?.parking_id);
+
+      if (this.subscribedParkings.includes(id)) {
+        this.addNotification("🔔 Une place vient de se libérer !");
+      }
+    });
   },
+
   methods: {
 
+    // =====================
+    // NOTIFICATIONS
+    // =====================
+    addNotification(msg) {
+      const id = Date.now();
+      this.notifications.push({ id, msg });
+
+      setTimeout(() => {
+        this.notifications = this.notifications.filter(n => n.id !== id);
+      }, 4000);
+    },
+
+    // =====================
+    // MAP
+    // =====================
     initMap() {
       this.map = L.map("map").setView([this.lat, this.lng], 13);
 
@@ -80,148 +131,196 @@ export default {
     },
 
     getLocation() {
-      if (!navigator.geolocation) return;
-
-      navigator.geolocation.getCurrentPosition(pos => {
+      navigator.geolocation?.getCurrentPosition(pos => {
         this.lat = pos.coords.latitude;
         this.lng = pos.coords.longitude;
-
-        L.marker([this.lat, this.lng])
-          .addTo(this.map)
-          .bindPopup("Vous êtes ici");
-
         this.map.setView([this.lat, this.lng], 14);
       });
     },
 
     // =====================
-    // FAKE DATA (LIVE SIMULATION)
+    // DATA
     // =====================
-    generateFakeOccupancy(parkingId, total) {
-      // simulation réaliste : entre 30% et 95% occupé
-      const min = Math.floor(total * 0.3);
-      const max = Math.floor(total * 0.95);
+    async loadAllParkings() {
+      const res = await fetch("http://localhost:3000/api/parkings");
+      const data = await res.json();
 
-      return Math.floor(Math.random() * (max - min + 1)) + min;
+      this.allParkings = data;
+      this.viewParkings = data;
+
+      this.placesByParking = {};
+
+      for (const p of data) {
+        const r = await fetch(
+          `http://localhost:3000/api/places?id=${p.id_parking}`
+        );
+        const places = await r.json();
+
+        this.placesByParking[p.id_parking] = {
+          occupied: places.filter(x => x.etat_place === 1).length,
+          total: places.length
+        };
+      }
+
+      this.renderMarkers();
     },
 
     // =====================
-    // LOAD PARKINGS
+    // MARKERS + POPUP RESTAURÉ
     // =====================
-    async loadAllParkings() {
-      try {
-        const res = await fetch("http://localhost:3000/api/parkings");
-        this.parkings = await res.json();
-        this.allParkings = [...this.parkings];
+    renderMarkers() {
+      if (!this.markersLayer) return;
 
-        this.placesByParking = {};
+      this.markersLayer.clearLayers();
 
-        this.parkings.forEach(p => {
-          const fakeOccupied = this.generateFakeOccupancy(
-            p.id_parking,
-            p.capacite_totale
-          );
+      this.viewParkings.forEach(p => {
 
-          this.placesByParking[p.id_parking] = {
-            occupied: fakeOccupied,
-            total: p.capacite_totale
-          };
+        const stats = this.placesByParking[p.id_parking];
+        if (!stats) return;
+
+        const free = stats.total - stats.occupied;
+        const ratio = stats.occupied / stats.total;
+
+        let color = "green";
+        if (ratio >= 0.7) color = "red";
+        else if (ratio >= 0.5) color = "orange";
+
+        const subscribed =
+          this.subscribedParkings.includes(Number(p.id_parking));
+
+        const icon = L.icon({
+          iconUrl: subscribed
+            ? "https://maps.google.com/mapfiles/ms/icons/blue-dot.png"
+            : `https://maps.google.com/mapfiles/ms/icons/${color}-dot.png`,
+          iconSize: [32, 32]
         });
 
-        this.renderMarkers();
+        const marker = L.marker([p.latitude, p.longitude], { icon });
 
-        const totalOcc = Object.values(this.placesByParking)
-          .reduce((a, b) => a + b.occupied, 0);
+        // 🔥 POPUP COMPLET RESTAURÉ
+        marker.bindPopup(`
+          <b>${p.nom}</b><br>
+          ${stats.occupied}/${stats.total}<br>
+          ${free} libres<br><br>
 
-        const totalPlaces = this.parkings
-          .reduce((a, p) => a + p.capacite_totale, 0);
+          <button id="go-${p.id_parking}">Y aller</button>
+          <button id="r-${p.id_parking}">Réserver</button>
+          <button id="s-${p.id_parking}">
+            ${subscribed ? "Désabonner" : "S'abonner"}
+          </button>
+        `);
 
-        this.message = `${totalOcc} places occupées sur ${totalPlaces}`;
+        marker.on("popupopen", () => {
+          this.$nextTick(() => {
 
-      } catch (e) {
-        console.log(e);
-        this.message = "Erreur API";
+            document.getElementById(`go-${p.id_parking}`).onclick =
+              () => this.goToParking(p);
+
+            document.getElementById(`r-${p.id_parking}`).onclick =
+              () => this.$router.push({
+                name: "reservation",
+                query: { id: p.id_parking }
+              });
+
+            document.getElementById(`s-${p.id_parking}`).onclick =
+              () => this.toggleSubscription(p.id_parking);
+          });
+        });
+
+        this.markersLayer.addLayer(marker);
+      });
+    },
+
+    // =====================
+    // ROUTE PARKING
+    // =====================
+    goToParking(p) {
+
+      if (this.routeControl) {
+        this.map.removeControl(this.routeControl);
+      }
+
+      this.routeControl = L.Routing.control({
+        waypoints: [
+          L.latLng(this.lat, this.lng),
+          L.latLng(p.latitude, p.longitude)
+        ],
+        routeWhileDragging: false,
+        addWaypoints: false,
+        language: "fr",
+        lineOptions: {
+          styles: [{ color: "#0b6380", weight: 6 }]
+        }
+      }).addTo(this.map);
+
+      this.addNotification("🚗 Itinéraire vers parking");
+    },
+
+    // =====================
+    // 🔥 ITINÉRAIRE ADRESSE FIXÉ
+    // =====================
+    async searchDestination() {
+
+      if (!this.destination) {
+        this.addNotification("⚠️ Adresse vide");
+        return;
+      }
+
+      this.addNotification("🔎 Recherche...");
+
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(this.destination)}`
+        );
+
+        const data = await res.json();
+
+        if (!data.length) {
+          this.addNotification("❌ Adresse introuvable");
+          return;
+        }
+
+        const dest = data[0];
+        const destLat = parseFloat(dest.lat);
+        const destLng = parseFloat(dest.lon);
+
+        this.map.setView([destLat, destLng], 14);
+
+        if (this.routeControl) {
+          this.map.removeControl(this.routeControl);
+        }
+
+        this.routeControl = L.Routing.control({
+          waypoints: [
+            L.latLng(this.lat, this.lng),
+            L.latLng(destLat, destLng)
+          ],
+          routeWhileDragging: false,
+          addWaypoints: false,
+          language: "fr",
+          lineOptions: {
+            styles: [{ color: "#0b6380", weight: 6 }]
+          }
+        }).addTo(this.map);
+
+        this.addNotification("🚗 Itinéraire affiché !");
+      }
+      catch (e) {
+        console.error(e);
+        this.addNotification("❌ Erreur itinéraire");
       }
     },
 
     // =====================
-    // MAP MARKERS
-    // =====================
-renderMarkers() {
-  if (!this.map || !this.markersLayer) return;
+    goProfil() {
+      this.$router.push("/profil");
+    },
 
-  this.markersLayer.clearLayers();
-
-  this.parkings.forEach((p) => {
-
-    const stats = this.placesByParking[p.id_parking] || {
-      occupied: 0,
-      total: p.capacite_totale
-    };
-
-    const free = Math.max(0, stats.total - stats.occupied);
-
-    let color = "green";
-    if (free <= 10) color = "orange";
-    if (free <= 0) color = "red";
-
-    const icon = L.icon({
-      iconUrl: `https://maps.google.com/mapfiles/ms/icons/${color}-dot.png`,
-      iconSize: [32, 32]
-    });
-
-    const marker = L.marker(
-      [p.latitude, p.longitude],
-      { icon }
-    );
-
-    marker.bindPopup(`
-      <div style="text-align:center">
-        <b>${p.nom}</b><br><br>
-        ${stats.occupied} places occupées sur ${stats.total}<br>
-        ${free} places libres<br><br>
-
-        <button id="reserve-${p.id_parking}">
-          Réserver
-        </button>
-      </div>
-    `);
-
-    marker.on("popupopen", () => {
-      this.$nextTick(() => {
-        const btn = document.getElementById(`reserve-${p.id_parking}`);
-
-        if (btn) {
-          btn.onclick = () => {
-            this.$router.push({
-              name: "reservation",
-              query: {
-                id: p.id_parking
-              }
-            });
-          };
-        }
-      });
-    });
-
-    this.markersLayer.addLayer(marker);
-  });
-},
-
-    // =====================
-    // FILTERS
-    // =====================
     loadNearby() {
-      this.parkings = this.allParkings.filter(p => {
-        const d = Math.hypot(
-          this.lat - p.latitude,
-          this.lng - p.longitude
-        );
-        return d < 0.02;
-      });
-
+      this.viewParkings = this.allParkings.filter(p =>
+        Math.hypot(this.lat - p.latitude, this.lng - p.longitude) < 0.02
+      );
       this.renderMarkers();
-      this.message = "Parkings proches";
     },
 
     findBest() {
@@ -229,17 +328,12 @@ renderMarkers() {
       let bestScore = Infinity;
 
       this.allParkings.forEach(p => {
-        const stats = this.placesByParking[p.id_parking];
-        if (!stats) return;
+        const s = this.placesByParking[p.id_parking];
+        if (!s) return;
 
-        const dist = Math.hypot(
-          this.lat - p.latitude,
-          this.lng - p.longitude
-        );
-
-        const dispo = 1 - stats.occupied / stats.total;
-
-        const score = dist + (1 - dispo);
+        const score =
+          Math.hypot(this.lat - p.latitude, this.lng - p.longitude) +
+          (1 - (s.total - s.occupied) / s.total);
 
         if (score < bestScore) {
           bestScore = score;
@@ -249,19 +343,16 @@ renderMarkers() {
 
       if (best) {
         this.map.setView([best.latitude, best.longitude], 16);
-        this.message = "Meilleur parking trouvé";
       }
     },
 
-    searchDestination() {
-      if (!this.destination) return;
-
-      this.message = "Recherche...";
-    },
-
-    goProfil() {
-      this.$router.push("/profil");
+    showSubscribedOnly() {
+      this.viewParkings = this.allParkings.filter(p =>
+        this.subscribedParkings.includes(Number(p.id_parking))
+      );
+      this.renderMarkers();
     }
+
   }
 };
 </script>
@@ -279,7 +370,7 @@ header {
   padding: 30px;
   text-align: center;
   font-weight: bold;
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .container {
@@ -292,45 +383,47 @@ header {
   background: #74b0bf;
   padding: 10px;
   overflow: auto;
-  border-right: 1px solid #ddd;
 }
 
 .card {
   background: rgba(255,255,255,0.92);
   padding: 16px;
   margin-top: 16px;
-  margin-bottom: 12px;
   border-radius: 14px;
-  box-shadow: 0 8px 25px rgba(0,0,0,0.12);
 }
 
 input {
   width: 100%;
-  padding: 10px 12px;
-  margin-top: 6px;
-  border: 1px solid rgba(0,0,0,0.15);
+  padding: 10px;
   border-radius: 10px;
-  box-sizing: border-box;
+  border: none;
 }
 
 button {
   width: 100%;
   padding: 10px;
-  margin-top: 5px;
+  margin-top: 8px;
   background: #0b6380;
   color: white;
   border: none;
   border-radius: 10px;
-  cursor: pointer;
 }
 
 #map {
   flex: 1;
 }
 
-.message {
-  text-align: center;
-  padding: 10px;
-  font-weight: bold;
+.notifications {
+  position: fixed;
+  top: 100px;
+  right: 20px;
+}
+
+.toast {
+  background: #0b6380;
+  color: white;
+  padding: 12px;
+  margin-top: 10px;
+  border-radius: 12px;
 }
 </style>
